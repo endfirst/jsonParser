@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSON Viewer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --border: #e4e4e0;
+    --text: #1a1a18;
+    --text-muted: #6b6b66;
+    --text-faint: #9e9e98;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --json-key: #7c3aed;
+    --json-str: #0d7654;
+    --json-num: #1d4ed8;
+    --json-bool: #b45309;
+    --json-null: #6b7280;
+    --tree-line: #d1d5db;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --surface: #1e1e1c; --border: #2e2e2b;
+      --text: #f0f0ec; --text-muted: #9e9e98; --text-faint: #606060;
+      --json-key: #a78bfa; --json-str: #34d399; --json-num: #60a5fa;
+      --json-bool: #fbbf24; --json-null: #9ca3af; --tree-line: #3f3f3b;
+    }
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; }
+
+  .app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 24px;
+    gap: 10px;
+  }
+
+  /* ── Header ── */
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+  .logo { width: 28px; height: 28px; background: var(--text); border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+  .logo svg { width: 16px; height: 16px; fill: var(--bg); }
+  h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
+
+  /* ── Buttons ── */
+  button { font-family: var(--sans); cursor: pointer; border: none; outline: none; transition: opacity 0.15s, background 0.15s, transform 0.1s; }
+  button:active { transform: scale(0.97); }
+  .btn-icon { background: transparent; color: var(--text-muted); padding: 5px 8px; border-radius: var(--radius-sm); font-size: 12px; }
+  .btn-icon:hover { background: var(--border); color: var(--text); }
+  .btn-primary { background: var(--text); color: var(--bg); padding: 7px 18px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; letter-spacing: -0.01em; }
+  .btn-primary:hover { opacity: 0.82; }
+  .panel-action { font-size: 11px; color: var(--text-faint); background: transparent; padding: 3px 8px; border-radius: 4px; }
+  .panel-action:hover { background: var(--border); color: var(--text-muted); }
+
+  /* ── Input area ── */
+  .input-area { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .input-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg); flex-wrap: wrap; gap: 8px; }
+  .input-label { font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .toolbar-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+  /* ── Textarea with overlay ── */
+  .textarea-wrap { position: relative; }
+  .textarea-wrap.drag-over { outline: 2px dashed #6366f1; outline-offset: -2px; }
+
+  .line-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    padding: 14px 16px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+    overflow: hidden; white-space: pre-wrap; word-break: break-all;
+    color: transparent; z-index: 1;
+  }
+  .err-line {
+    display: block;
+    background: rgba(220,38,38,0.1);
+    border-left: 3px solid #dc2626;
+    margin-left: -16px; padding-left: 13px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .err-line { background: rgba(248,113,113,0.13); border-left-color: #f87171; }
+  }
+
+  .drop-overlay {
+    display: none; position: absolute; inset: 0; z-index: 10;
+    background: rgba(99,102,241,0.07);
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .drop-overlay.active { display: flex; }
+  .drop-icon { font-size: 34px; }
+  .drop-text { font-size: 14px; font-weight: 600; color: #6366f1; }
+  .drop-sub  { font-size: 12px; color: #818cf8; }
+
+  #input {
+    display: block; width: 100%; min-height: 140px;
+    padding: 14px 16px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+    background: var(--surface); color: var(--text);
+    border: none; resize: vertical; outline: none;
+    position: relative; z-index: 2;
+    /* keep bg visible through transparent bg trick is not needed — just white */
+  }
+  #input::placeholder { color: var(--text-faint); }
+
+  /* ── Error bar ── */
+  .error-bar { display: none; align-items: flex-start; gap: 8px; padding: 10px 14px; background: #fff1f0; border: 1px solid #fca5a5; border-radius: var(--radius-md); font-size: 13px; color: #b91c1c; }
+  @media (prefers-color-scheme: dark) { .error-bar { background: #2d1212; border-color: #7f1d1d; color: #fca5a5; } }
+  .error-bar.show { display: flex; }
+
+  /* ── Output panels ── */
+  .panels { display: none; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panels.show { display: grid; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; min-height: 300px; }
+  .panel-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg); flex-shrink: 0; }
+  .panel-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .panel-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot-pretty { background: #34d399; }
+  .dot-tree   { background: #60a5fa; }
+  .panel-body { padding: 14px 16px; overflow: auto; flex: 1; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; }
+
+  /* ── Pretty panel edit mode ── */
+  .pretty-panel-body { padding: 0; position: relative; overflow: hidden; }
+  #pretty { padding: 14px 16px; min-height: 280px; white-space: pre-wrap; word-break: break-all; }
+  #pretty-editor {
+    display: none; position: absolute; inset: 0;
+    width: 100%; height: 100%; min-height: 280px;
+    padding: 14px 16px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
+    background: var(--surface); color: var(--text);
+    border: none; resize: none; outline: none; z-index: 2;
+  }
+
+  /* ── Syntax colors ── */
+  .jk { color: var(--json-key); } .js { color: var(--json-str); }
+  .jn { color: var(--json-num); } .jb { color: var(--json-bool); } .jz { color: var(--json-null); }
+
+  /* ── Tree ── */
+  .tree-node { line-height: 1.7; }
+  .tree-row { display: flex; align-items: flex-start; }
+  .tree-btn { background: transparent; border: none; padding: 0 4px 0 0; cursor: pointer; font-size: 10px; color: var(--text-faint); line-height: 1.7; flex-shrink: 0; }
+  .tree-btn:hover, .tree-btn.open { color: var(--text-muted); }
+  .tree-sp { display: inline-block; width: 14px; flex-shrink: 0; }
+  .tree-ct { flex: 1; }
+  .tree-ch { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--tree-line); }
+  .tree-ch.collapsed { display: none; }
+  .tk { color: var(--json-key); } .ts { color: var(--json-str); }
+  .tn { color: var(--json-num); } .tb { color: var(--json-bool); } .tz { color: var(--json-null); }
+  .tm { color: var(--text-faint); font-size: 11px; }
+  .tbr { color: var(--text-muted); }
+
+  @media (max-width: 700px) {
+    .panels.show { grid-template-columns: 1fr; }
+    .app { padding: 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 16 16"><path d="M2 3h3v3H2zm4.5 0h3v3h-3zm4.5 0h3v3h-3zM2 7.5h3v3H2zm4.5 0h3v3h-3zm4.5 0h3v3h-3zM2 12h3v3H2zm4.5 0h3v3h-3zm4.5 0h3v3h-3z" opacity=".4"/><rect x="4" y="4" width="8" height="8" rx="1"/></svg>
+    </div>
+    <h1>JSON PARSER</h1>
+  </header>
+
+  <!-- Input -->
+  <div class="input-area">
+    <div class="input-toolbar">
+      <span class="input-label">JSON Input</span>
+      <div class="toolbar-actions">
+        <button class="btn-icon" onclick="clearInput()">Clear</button>
+        <button class="btn-icon" onclick="pasteClipboard()">Paste</button>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);">
+          Indent
+          <input id="indent" type="number" min="1" max="8" value="4"
+            style="width:44px;padding:5px 7px;font-family:var(--mono);font-size:12px;
+                   border:1px solid var(--border);border-radius:var(--radius-sm);
+                   background:var(--surface);color:var(--text);outline:none;text-align:center;">
+        </label>
+        <button class="btn-primary" onclick="convert()">Convert ↵</button>
+      </div>
+    </div>
+    <div class="textarea-wrap" id="drop-zone">
+      <div class="line-overlay" id="line-overlay"></div>
+      <div class="drop-overlay" id="drop-overlay">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text">Drop your JSON file here</div>
+        <div class="drop-sub">.json files only</div>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder='{ "key": "value", "number": 42, "array": [1, 2, 3] }'></textarea>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="error" class="error-bar">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;margin-top:2px">
+      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 11.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zm.75-3.5a.75.75 0 0 1-1.5 0V5a.75.75 0 0 1 1.5 0v4z"/>
+    </svg>
+    <span id="error-msg"></span>
+  </div>
+
+  <!-- Output panels -->
+  <div class="panels" id="panels">
+
+    <!-- Pretty -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="panel-dot dot-pretty"></span>Pretty</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="panel-action" id="edit-btn" onclick="toggleEdit()">✏️ Edit</button>
+          <button class="panel-action" id="apply-btn" style="display:none;color:#15803d;font-weight:600" onclick="applyEdit()">✓ Apply</button>
+          <button class="panel-action" id="cancel-btn" style="display:none;color:#b91c1c" onclick="cancelEdit()">✕ Cancel</button>
+          <button class="panel-action" onclick="copyPretty()">Copy</button>
+          <button class="panel-action" onclick="savePretty()">Save</button>
+        </div>
+      </div>
+      <div class="panel-body pretty-panel-body">
+        <div id="pretty"></div>
+        <textarea id="pretty-editor" spellcheck="false"></textarea>
+      </div>
+    </div>
+
+    <!-- Tree -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="panel-dot dot-tree"></span>Tree</div>
+        <div style="display:flex;gap:6px">
+          <button class="panel-action" onclick="expandAll()">Expand All</button>
+          <button class="panel-action" onclick="collapseAll()">Collapse All</button>
+        </div>
+      </div>
+      <div class="panel-body"><div id="tree"></div></div>
+    </div>
+
+  </div>
+
+</div><!-- /.app -->
+<script>
+const inputEl  = document.getElementById('input');
+const errorEl  = document.getElementById('error');
+const errorMsg = document.getElementById('error-msg');
+const panelsEl = document.getElementById('panels');
+const prettyEl = document.getElementById('pretty');
+const treeEl   = document.getElementById('tree');
+const overlayEl= document.getElementById('line-overlay');
+
+inputEl.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') convert();
+});
+inputEl.addEventListener('scroll', () => { overlayEl.scrollTop = inputEl.scrollTop; });
+
+// ── Clear / Paste ──────────────────────────────────────────
+function clearInput() {
+  inputEl.value = '';
+  hideError();
+  clearOverlay();
+  panelsEl.classList.remove('show');
+  cancelEdit();
+}
+
+async function pasteClipboard() {
+  try {
+    inputEl.value = await navigator.clipboard.readText();
+  } catch(e) {
+    inputEl.focus();
+    const orig = inputEl.placeholder;
+    inputEl.placeholder = 'Press Cmd+V (Mac) or Ctrl+V (Windows) to paste...';
+    setTimeout(() => { inputEl.placeholder = orig; }, 3000);
+  }
+}
+
+// ── Error ──────────────────────────────────────────────────
+function showError(msg) { errorMsg.textContent = msg; errorEl.classList.add('show'); }
+function hideError()    { errorEl.classList.remove('show'); }
+
+// ── Line highlight overlay ─────────────────────────────────
+function showOverlay(lineNumber) {
+  const lines = inputEl.value.split('\n');
+  const target = lineNumber - 1;
+  const html = lines.map((line, i) => {
+    const esc = escHtml(line) + '\n';
+    return i === target ? `<span class="err-line">${esc}</span>` : esc;
+  }).join('');
+  overlayEl.innerHTML = html;
+  const lh = parseFloat(getComputedStyle(inputEl).lineHeight);
+  inputEl.scrollTop = Math.max(0, (target - 3) * lh);
+  overlayEl.scrollTop = inputEl.scrollTop;
+}
+function clearOverlay() { overlayEl.innerHTML = ''; }
+
+// ── Convert ────────────────────────────────────────────────
+function convert() {
+  const raw = inputEl.value.trim();
+  hideError(); clearOverlay();
+  if (!raw) { showError('Please enter JSON.'); panelsEl.classList.remove('show'); return; }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch(e) {
+    const lineMatch = e.message.match(/line (\d+)/i);
+    let lineNum = lineMatch ? parseInt(lineMatch[1]) : findErrorLine(raw);
+    showError('Invalid JSON: ' + e.message + (lineNum ? ` — line ${lineNum}` : ''));
+    if (lineNum) showOverlay(lineNum);
+    panelsEl.classList.remove('show');
+    return;
+  }
+  const indent = parseInt(document.getElementById('indent').value) || 4;
+  prettyEl.innerHTML = highlight(JSON.stringify(parsed, null, indent));
+  treeEl.innerHTML = '';
+  treeEl.appendChild(buildTree(parsed, null));
+  panelsEl.classList.add('show');
+}
+
+function findErrorLine(raw) {
+  const lines = raw.split('\n');
+  for (let i = 1; i <= lines.length; i++) {
+    try { JSON.parse(lines.slice(0, i).join('\n')); } catch(e) { return i; }
+  }
+  return null;
+}
+
+// ── Syntax highlight ───────────────────────────────────────
+function highlight(str) {
+  const esc = str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return esc.replace(
+    /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    m => {
+      if (/^"/.test(m) && /:$/.test(m)) return `<span class="jk">${m}</span>`;
+      if (/^"/.test(m))                  return `<span class="js">${m}</span>`;
+      if (/true|false/.test(m))          return `<span class="jb">${m}</span>`;
+      if (/null/.test(m))                return `<span class="jz">${m}</span>`;
+      return `<span class="jn">${m}</span>`;
+    }
+  );
+}
+
+// ── Tree ───────────────────────────────────────────────────
+function buildTree(val, key) {
+  const node = document.createElement('div');
+  node.className = 'tree-node';
+  const keyHtml = key === null ? '' :
+    typeof key === 'number'
+      ? `<span class="tn">${key}</span><span class="tbr">: </span>`
+      : `<span class="tk">"${key}"</span><span class="tbr">: </span>`;
+
+  if (val === null) {
+    node.innerHTML = `<div class="tree-row"><span class="tree-sp"></span><span class="tree-ct">${keyHtml}<span class="tz">null</span></span></div>`;
+  } else if (typeof val === 'boolean') {
+    node.innerHTML = `<div class="tree-row"><span class="tree-sp"></span><span class="tree-ct">${keyHtml}<span class="tb">${val}</span></span></div>`;
+  } else if (typeof val === 'number') {
+    node.innerHTML = `<div class="tree-row"><span class="tree-sp"></span><span class="tree-ct">${keyHtml}<span class="tn">${val}</span></span></div>`;
+  } else if (typeof val === 'string') {
+    const d = val.length > 120 ? val.slice(0,120)+'…' : val;
+    node.innerHTML = `<div class="tree-row"><span class="tree-sp"></span><span class="tree-ct">${keyHtml}<span class="ts">"${escHtml(d)}"</span></span></div>`;
+  } else if (Array.isArray(val)) {
+    const btn = mkBtn(); const row = mkRow();
+    const ct = document.createElement('span'); ct.className='tree-ct';
+    ct.innerHTML = `${keyHtml}<span class="tbr">[</span> <span class="tm">${val.length} items</span>`;
+    const ch = mkCh(); val.forEach((v,i) => ch.appendChild(buildTree(v,i)));
+    const cl = document.createElement('div'); cl.innerHTML=`<span class="tree-sp"></span><span class="tbr">]</span>`;
+    btn.onclick=()=>toggle(btn,ch); row.appendChild(btn); row.appendChild(ct);
+    node.appendChild(row); node.appendChild(ch); node.appendChild(cl);
+  } else {
+    const keys = Object.keys(val);
+    const btn = mkBtn(); const row = mkRow();
+    const ct = document.createElement('span'); ct.className='tree-ct';
+    ct.innerHTML = `${keyHtml}<span class="tbr">{</span> <span class="tm">${keys.length} keys</span>`;
+    const ch = mkCh(); keys.forEach(k => ch.appendChild(buildTree(val[k],k)));
+    const cl = document.createElement('div'); cl.innerHTML=`<span class="tree-sp"></span><span class="tbr">}</span>`;
+    btn.onclick=()=>toggle(btn,ch); row.appendChild(btn); row.appendChild(ct);
+    node.appendChild(row); node.appendChild(ch); node.appendChild(cl);
+  }
+  return node;
+}
+function mkBtn() { const b=document.createElement('button'); b.className='tree-btn open'; b.textContent='▾'; return b; }
+function mkRow() { const r=document.createElement('div'); r.className='tree-row'; return r; }
+function mkCh()  { const c=document.createElement('div'); c.className='tree-ch'; return c; }
+function toggle(btn,ch) {
+  const open=!ch.classList.contains('collapsed');
+  ch.classList.toggle('collapsed',open);
+  btn.textContent=open?'▸':'▾';
+  btn.classList.toggle('open',!open);
+}
+function expandAll() {
+  treeEl.querySelectorAll('.tree-ch').forEach(c=>c.classList.remove('collapsed'));
+  treeEl.querySelectorAll('.tree-btn').forEach(b=>{b.textContent='▾';b.classList.add('open');});
+}
+function collapseAll() {
+  treeEl.querySelectorAll('.tree-ch').forEach(c=>c.classList.add('collapsed'));
+  treeEl.querySelectorAll('.tree-btn').forEach(b=>{b.textContent='▸';b.classList.remove('open');});
+}
+
+// ── Edit mode ─────────────────────────────────────────────
+let editMode = false;
+function toggleEdit() {
+  const editor = document.getElementById('pretty-editor');
+  const indent = parseInt(document.getElementById('indent').value) || 4;
+  try { editor.value = JSON.stringify(JSON.parse(inputEl.value.trim()), null, indent); }
+  catch(e) { editor.value = prettyEl.innerText; }
+  prettyEl.style.display  = 'none';
+  editor.style.display    = 'block';
+  document.getElementById('edit-btn').style.display   = 'none';
+  document.getElementById('apply-btn').style.display  = 'inline-block';
+  document.getElementById('cancel-btn').style.display = 'inline-block';
+  editor.focus(); editMode = true;
+}
+function applyEdit() {
+  const editor = document.getElementById('pretty-editor');
+  let parsed;
+  try { parsed = JSON.parse(editor.value.trim()); }
+  catch(e) {
+    editor.style.outline = '2px solid #dc2626';
+    setTimeout(()=>{ editor.style.outline='none'; }, 1200);
+    showError('Edit error: ' + e.message); return;
+  }
+  const indent = parseInt(document.getElementById('indent').value) || 4;
+  inputEl.value = JSON.stringify(parsed, null, indent);
+  prettyEl.innerHTML = highlight(JSON.stringify(parsed, null, indent));
+  treeEl.innerHTML = ''; treeEl.appendChild(buildTree(parsed, null));
+  hideError(); exitEdit();
+}
+function cancelEdit() { hideError(); exitEdit(); }
+function exitEdit() {
+  prettyEl.style.display = 'block';
+  document.getElementById('pretty-editor').style.display = 'none';
+  document.getElementById('edit-btn').style.display   = 'inline-block';
+  document.getElementById('apply-btn').style.display  = 'none';
+  document.getElementById('cancel-btn').style.display = 'none';
+  editMode = false;
+}
+
+// ── Copy / Save ────────────────────────────────────────────
+function copyPretty() {
+  try {
+    const indent = parseInt(document.getElementById('indent').value) || 4;
+    navigator.clipboard.writeText(JSON.stringify(JSON.parse(inputEl.value.trim()), null, indent));
+  } catch(e) {}
+}
+function savePretty() {
+  try {
+    const indent = parseInt(document.getElementById('indent').value) || 4;
+    const pretty = JSON.stringify(JSON.parse(inputEl.value.trim()), null, indent);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([pretty], {type:'application/json'}));
+    a.download = 'pretty.json'; a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(e) {}
+}
+
+// ── Drag & Drop ────────────────────────────────────────────
+(function(){
+  const zone    = document.getElementById('drop-zone');
+  const overlay = document.getElementById('drop-overlay');
+  let cnt = 0;
+  zone.addEventListener('dragenter', e => { e.preventDefault(); cnt++; zone.classList.add('drag-over'); overlay.classList.add('active'); });
+  zone.addEventListener('dragleave', () => { if(--cnt<=0){ cnt=0; zone.classList.remove('drag-over'); overlay.classList.remove('active'); } });
+  zone.addEventListener('dragover',  e => e.preventDefault());
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); cnt=0;
+    zone.classList.remove('drag-over'); overlay.classList.remove('active');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (!file.name.endsWith('.json') && file.type !== 'application/json') { showError('Only .json files are supported.'); return; }
+    const reader = new FileReader();
+    reader.onload = ev => { inputEl.value = ev.target.result; convert(); };
+    reader.onerror = () => showError('Failed to read file.');
+    reader.readAsText(file);
+  });
+  document.addEventListener('dragover', e => e.preventDefault());
+})();
+
+// ── Utils ──────────────────────────────────────────────────
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
